@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Blokus Online</title>
+    <style>
+        body { font-family: sans-serif; background-color: #f5f5f5; margin: 0; padding: 10px; overflow: hidden; }
+        
+        /* 3カラムレイアウト */
+        #main-layout { display: flex; gap: 20px; justify-content: center; height: 95vh; }
+        
+        /* 左：他プレイヤー情報 */
+        #left-sidebar { width: 250px; background: white; padding: 15px; border-radius: 8px; overflow-y: auto; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .opponent-box { border-bottom: 2px dashed #ccc; padding-bottom: 10px; margin-bottom: 10px; }
+        .opponent-inventory { display: flex; flex-wrap: wrap; gap: 4px; }
+        
+        /* 中央：盤面と設定 */
+        #center-area { display: flex; flex-direction: column; align-items: center; }
+        #setup-bar { background: white; padding: 10px 20px; border-radius: 8px; margin-bottom: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); width: 100%; text-align: center; }
+        .turn-indicator { font-size: 20px; font-weight: bold; padding: 10px; border-radius: 5px; text-align: center; margin-bottom: 10px; width: 100%; }
+        
+        #board {
+            display: grid;
+            grid-template-columns: repeat(20, 25px);
+            grid-template-rows: repeat(20, 25px);
+            gap: 1px; background-color: #333; padding: 2px; width: fit-content;
+        }
+        .cell { width: 25px; height: 25px; background-color: #eee; box-sizing: border-box; }
+        
+        /* 右：自分の持ち駒と操作説明 */
+        #right-sidebar { width: 350px; background: white; padding: 15px; border-radius: 8px; overflow-y: auto; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .info-box { background: #333; color: white; padding: 10px; border-radius: 5px; margin-bottom: 15px; font-size: 14px; }
+        #my-inventory { display: flex; flex-wrap: wrap; gap: 8px; }
+        
+        /* 色の定義 */
+        .player1 { background-color: #007bff !important; border-color: #0056b3 !important; color: white; } /* 青 */
+        .player2 { background-color: #ffc107 !important; border-color: #d39e00 !important; color: black; } /* 黄 */
+        .player3 { background-color: #dc3545 !important; border-color: #a71d2a !important; color: white; } /* 赤 */
+        .player4 { background-color: #28a745 !important; border-color: #1e7e34 !important; color: white; } /* 緑 */
+
+        .preview-valid { background-color: rgba(0, 255, 0, 0.5) !important; border: 2px solid #0f0; }
+        .preview-invalid { background-color: rgba(255, 0, 0, 0.5) !important; border: 2px solid #f00; }
+
+        /* ピースの描画用 */
+        .piece-item { padding: 5px; border: 2px solid transparent; cursor: pointer; transition: 0.1s; }
+        .piece-item:hover { transform: scale(1.1); }
+        .piece-item.selected { border-color: red; background-color: #ffe5e5; }
+        .mini-row { display: flex; }
+        .mini-cell { width: 12px; height: 12px; border: 1px solid #ccc; }
+        .mini-cell.filled { background-color: #555; }
+        .mini-cell.empty { border-color: transparent; }
+
+        /* 他プレイヤー用の超極小ピース */
+        .micro-cell { width: 6px; height: 6px; border: 1px solid #ccc; }
+        .micro-cell.empty { border-color: transparent; }
+
+        kbd { background: #eee; border-radius: 3px; border: 1px solid #b4b4b4; padding: 2px 5px; font-weight: bold; color: black;}
+    </style>
+</head>
+<body>
+    <div id="main-layout">
+        
+        <div id="left-sidebar">
+            <h3 style="margin-top: 0;">他プレイヤー</h3>
+            <div id="opponents-list"></div>
+        </div>
+
+        <div id="center-area">
+            <div id="setup-bar">
+                <b>プレイ人数: </b>
+                <select id="max-players" style="margin-right: 15px;">
+                    <option value="2">2人対戦</option>
+                    <option value="3">3人対戦</option>
+                    <option value="4" selected>4人対戦</option>
+                </select>
+                <button onclick="startGame()" style="color: red; font-weight: bold;">ゲームをリセットして開始</button>
+                <hr>
+                <b>あなたの色: </b>
+                <select id="my-player-color" onchange="updateUI()">
+                    <option value="1">プレイヤー1 (青)</option>
+                    <option value="2">プレイヤー2 (黄)</option>
+                    <option value="3">プレイヤー3 (赤)</option>
+                    <option value="4">プレイヤー4 (緑)</option>
+                </select>
+            </div>
+            
+            <div id="turn-display" class="turn-indicator">読み込み中...</div>
+            <div id="board"></div>
+        </div>
+
+        <div id="right-sidebar">
+            <div class="info-box">
+                <b>【操作ガイド】</b><br><br>
+                1. 下のリストからピースを<b>クリック</b><br>
+                2. マウスにピースが追従します<br>
+                3. <kbd>R</kbd>キーで回転 / <kbd>F</kbd>キーで反転<br>
+                4. 盤面で置きたい場所を<b>クリック</b><br>
+                <hr style="border-color: #555;">
+                ※置ける場所が1つもない場合は、自動的に「パス」扱いになります。
+            </div>
+            <h3>あなたの残りピース</h3>
+            <div id="my-inventory"></div>
+        </div>
+
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        
+        // 全21種の公式データ（変更なし）
+        const PIECES = [
+            [[1]], [[1, 1]], [[1, 1, 1]], [[1, 0], [1, 1]], [[1, 1], [1, 1]], [[1, 1, 1, 1]],
+            [[1, 0, 0], [1, 1, 1]], [[0, 1, 0], [1, 1, 1]], [[1, 1, 0], [0, 1, 1]],
+            [[1, 1, 1, 1, 1]], [[1, 0, 0, 0], [1, 1, 1, 1]], [[0, 1, 0, 0], [1, 1, 1, 1]],
+            [[1, 1, 0], [1, 1, 0], [1, 0, 0]], [[1, 0, 1], [1, 1, 1]], [[1, 0, 0], [1, 0, 0], [1, 1, 1]],
+            [[1, 1, 0], [0, 1, 0], [0, 1, 1]], [[0, 1, 1], [1, 1, 0], [0, 1, 0]], [[1, 1, 1], [0, 1, 0], [0, 1, 0]],
+            [[1, 0, 0], [1, 1, 0], [0, 1, 1]], [[0, 1, 0], [1, 1, 1], [0, 1, 0]], [[1, 1, 0, 0], [0, 1, 1, 1]]
+        ];
+
+        let gameState = null;
+        let selectedPieceOriginalIndex = null; 
+        let currentPieceData = null;
+        let hoverX = -1, hoverY = -1;
+
+        // --- 通信処理 ---
+        socket.on('update_all', (data) => {
+            gameState = data;
+            
+            const myColor = parseInt(document.getElementById('my-player-color').value);
+            
+            // 自分の番になったら、置ける場所があるか（自動パス）をチェック！
+            if (gameState.turn === myColor) {
+                if (!hasAnyValidMoves(myColor)) {
+                    alert("置ける場所が1つもないため、自動的にパスしました。");
+                    socket.emit('pass_turn', myColor);
+                    return; // パスしたのでここで処理終了
+                }
+            }
+            
+            // 選んでいたピースが既に使われていたら選択解除
+            if (selectedPieceOriginalIndex !== null && !gameState.inventories[myColor].includes(selectedPieceOriginalIndex)) {
+                selectedPieceOriginalIndex = null;
+                currentPieceData = null;
+            }
+            updateUI();
+        });
+
+        function startGame() {
+            const max = parseInt(document.getElementById('max-players').value);
+            socket.emit('start_game', max);
+        }
+
+        // --- ルール判定群 ---
+        function checkIsMyFirstMove(player) {
+            return !gameState.board.some(row => row.includes(player));
+        }
+
+        function isValidPlacement(piece, startX, startY, player) {
+            if (player !== gameState.turn) return false; 
+            let hasCornerContact = false;
+            let onBoardCorner = false;
+            let isFirst = checkIsMyFirstMove(player);
+
+            for (let r = 0; r < piece.length; r++) {
+                for (let c = 0; c < piece[r].length; c++) {
+                    if (piece[r][c] === 0) continue;
+                    let px = startX + c, py = startY + r;
+
+                    if (px < 0 || px >= 20 || py < 0 || py >= 20) return false;
+                    if (gameState.board[py][px] !== 0) return false;
+
+                    const edges = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+                    for (let [dy, dx] of edges) {
+                        let ey = py + dy, ex = px + dx;
+                        if (ey >= 0 && ey < 20 && ex >= 0 && ex < 20 && gameState.board[ey][ex] === player) return false;
+                    }
+
+                    const corners = [[-1, -1], [-1, 1], [1, -1], [1, 1]];
+                    for (let [dy, dx] of corners) {
+                        let cy = py + dy, cx = px + dx;
+                        if (cy >= 0 && cy < 20 && cx >= 0 && cx < 20 && gameState.board[cy][cx] === player) hasCornerContact = true;
+                    }
+                    if ((px === 0 && py === 0) || (px === 19 && py === 0) || (px === 0 && py === 19) || (px === 19 && py === 19)) onBoardCorner = true;
+                }
+            }
+            return isFirst ? onBoardCorner : hasCornerContact;
+        }
+
+        // ★自動パス用の超強力な裏側シミュレーター★
+        // 持っている全ピースの、全回転・全反転パターンを、全マスで試す
+        function hasAnyValidMoves(player) {
+            const myIndices = gameState.inventories[player];
+            if (!myIndices || myIndices.length === 0) return false;
+
+            for (let idx of myIndices) {
+                let piece = PIECES[idx];
+                let variations = getPieceVariations(piece); // 回転・反転の全パターンを取得
+                
+                for (let v of variations) {
+                    for (let y = 0; y < 20; y++) {
+                        for (let x = 0; x < 20; x++) {
+                            if (isValidPlacement(v, x, y, player)) {
+                                return true; // 1つでも置ける場所が見つかればOK！
+                            }
+                        }
+                    }
+                }
+            }
+            return false; // 全部試してダメならパス
+        }
+
+        function getPieceVariations(piece) {
+            let vars = [];
+            let current = piece;
+            for (let i = 0; i < 4; i++) {
+                vars.push(current);
+                vars.push(getFlipped(current));
+                current = getRotated(current);
+            }
+            return vars;
+        }
+
+        // --- 画面描画処理 ---
+        function updateUI() {
+            if (!gameState) return;
+            const myColor = parseInt(document.getElementById('my-player-color').value);
+            
+            // ターンの表示
+            const turnDisp = document.getElementById('turn-display');
+            if (gameState.turn === 0) {
+                turnDisp.textContent = "ゲーム終了！！";
+                turnDisp.className = "turn-indicator";
+                turnDisp.style.backgroundColor = "black"; turnDisp.style.color = "white";
+            } else {
+                const colors = ["", "青 (P1)", "黄 (P2)", "赤 (P3)", "緑 (P4)"];
+                const isMyTurn = (gameState.turn === myColor);
+                turnDisp.textContent = isMyTurn ? "★あなたの番です★" : `現在：${colors[gameState.turn]} の番です`;
+                turnDisp.className = `turn-indicator player${gameState.turn}`;
+            }
+
+            drawBoard();
+            drawMyInventory(myColor);
+            drawOpponentsInventory(myColor);
+        }
+
+        function drawBoard() {
+            const boardElement = document.getElementById('board');
+            boardElement.innerHTML = '';
+            const myColor = parseInt(document.getElementById('my-player-color').value);
+            
+            const valid = currentPieceData ? isValidPlacement(currentPieceData, hoverX, hoverY, myColor) : false;
+
+            for (let y = 0; y < 20; y++) {
+                for (let x = 0; x < 20; x++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'cell';
+                    if (gameState.board[y][x] !== 0) cell.classList.add('player' + gameState.board[y][x]);
+
+                    // マウスホバーのプレビュー表示
+                    if (currentPieceData) {
+                        const pr = y - hoverY, pc = x - hoverX;
+                        if (pr >= 0 && pr < currentPieceData.length && pc >= 0 && pc < currentPieceData[0].length) {
+                            if (currentPieceData[pr][pc] === 1) {
+                                cell.classList.add(valid ? 'preview-valid' : 'preview-invalid');
+                            }
+                        }
+                    }
+
+                    cell.onmouseenter = () => { hoverX = x; hoverY = y; drawBoard(); };
+                    cell.onclick = () => {
+                        if (currentPieceData && valid) {
+                            socket.emit('place_piece', { 
+                                player: myColor, 
+                                piece: currentPieceData, 
+                                pieceIndex: selectedPieceOriginalIndex,
+                                x: x, y: y 
+                            });
+                            selectedPieceOriginalIndex = null;
+                            currentPieceData = null;
+                        }
+                    };
+                    boardElement.appendChild(cell);
+                }
+            }
+        }
+
+        // --- 自分の持ち駒を描画 ---
+        function drawMyInventory(myColor) {
+            const invElement = document.getElementById('my-inventory');
+            invElement.innerHTML = '';
+            const myPieceIndices = gameState.inventories[myColor] || [];
+            
+            myPieceIndices.forEach(idx => {
+                const pieceWrap = document.createElement('div');
+                pieceWrap.className = 'piece-item' + (selectedPieceOriginalIndex === idx ? ' selected' : '');
+                pieceWrap.innerHTML = createPieceHTML(PIECES[idx], 'mini-cell', `player${myColor}`);
+                pieceWrap.onclick = () => { 
+                    selectedPieceOriginalIndex = idx; 
+                    currentPieceData = PIECES[idx]; // 元の形をロード
+                    drawBoard(); drawMyInventory(myColor); 
+                };
+                invElement.appendChild(pieceWrap);
+            });
+        }
+
+        // --- 他人の持ち駒を左側に描画 ---
+        function drawOpponentsInventory(myColor) {
+            const oppElement = document.getElementById('opponents-list');
+            oppElement.innerHTML = '';
+            
+            for(let i=1; i<=gameState.maxPlayers; i++) {
+                if(i === myColor) continue; // 自分は飛ばす
+                
+                const box = document.createElement('div');
+                box.className = 'opponent-box';
+                box.innerHTML = `<h4>プレイヤー${i} (残り: ${gameState.inventories[i].length}個)</h4>`;
+                
+                const invDiv = document.createElement('div');
+                invDiv.className = 'opponent-inventory';
+                
+                gameState.inventories[i].forEach(idx => {
+                    // 超極小サイズで描画
+                    const pDiv = document.createElement('div');
+                    pDiv.innerHTML = createPieceHTML(PIECES[idx], 'micro-cell', `player${i}`);
+                    invDiv.appendChild(pDiv);
+                });
+                
+                box.appendChild(invDiv);
+                oppElement.appendChild(box);
+            }
+        }
+
+        // HTML文字列でピースを作る便利関数
+        function createPieceHTML(p, cellClass, colorClass) {
+            return p.map(row => `<div class='mini-row'>` + row.map(v => `<div class='${cellClass} ${v ? ('filled ' + colorClass) : 'empty'}'></div>`).join('') + `</div>`).join('');
+        }
+
+        // --- 回転・反転ロジック（配列を新しく作る） ---
+        function getRotated(p) {
+            const r = p.length, c = p[0].length;
+            let next = Array(c).fill().map(() => Array(r).fill(0));
+            for (let i = 0; i < r; i++) for (let j = 0; j < c; j++) next[j][r - 1 - i] = p[i][j];
+            return next;
+        }
+        function getFlipped(p) {
+            return p.map(row => [...row].reverse());
+        }
+
+        // キーボード操作（Rで回転、Fで反転）
+        window.onkeydown = (e) => {
+            if (!currentPieceData) return;
+            if (e.key.toLowerCase() === 'r') { currentPieceData = getRotated(currentPieceData); drawBoard(); }
+            if (e.key.toLowerCase() === 'f') { currentPieceData = getFlipped(currentPieceData); drawBoard(); }
+        };
+
+        // マウスが盤面から出た時のリセット
+        document.getElementById('board').onmouseleave = () => { hoverX = -1; hoverY = -1; drawBoard(); };
+    </script>
+</body>
+</html>
