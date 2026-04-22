@@ -5,35 +5,45 @@ const io = require('socket.io')(http);
 
 app.use(express.static(__dirname + '/public'));
 
-// --- ゲームの世界の記憶 ---
 let gameState = {
     board: Array(20).fill().map(() => Array(20).fill(0)),
     turn: 1,
     maxPlayers: 4,
-    activePlayers: [1, 2, 3, 4], // パスしていないプレイヤーのリスト
+    activePlayers: [1, 2, 3, 4],
     inventories: {
-        1: Array.from({length: 21}, (_, i) => i), // 0番〜20番のピースを持っているという記憶
+        1: Array.from({length: 21}, (_, i) => i),
         2: Array.from({length: 21}, (_, i) => i),
         3: Array.from({length: 21}, (_, i) => i),
         4: Array.from({length: 21}, (_, i) => i)
     }
 };
 
-function getNextTurn(current) {
-    if (gameState.activePlayers.length === 0) return 0; // 全員パスならゲーム終了（ターン0）
-    let currentIndex = gameState.activePlayers.indexOf(current);
+function getNextTurn(currentTurn, passedPlayer = null) {
+    let tempPlayers = [...gameState.activePlayers];
+    if (tempPlayers.length === 0) return 0;
+
+    let currentIndex = tempPlayers.indexOf(currentTurn);
     if (currentIndex === -1) currentIndex = 0;
-    
-    // 次のプレイヤーを探す
-    let nextIndex = (currentIndex + 1) % gameState.activePlayers.length;
-    return gameState.activePlayers[nextIndex];
+
+    let nextIndex = (currentIndex + 1) % tempPlayers.length;
+    let nextPlayer = tempPlayers[nextIndex];
+
+    if (passedPlayer !== null) {
+        gameState.activePlayers = gameState.activePlayers.filter(p => p !== passedPlayer);
+    }
+
+    if (gameState.activePlayers.length === 0) return 0;
+
+    if (nextPlayer === passedPlayer) {
+        return gameState.activePlayers[0];
+    }
+
+    return nextPlayer;
 }
 
 io.on('connection', (socket) => {
-    // 接続した人に今の状態を渡す
     socket.emit('update_all', gameState);
 
-    // --- ゲーム設定の変更 ---
     socket.on('start_game', (max) => {
         gameState.maxPlayers = max;
         gameState.activePlayers = [];
@@ -49,11 +59,9 @@ io.on('connection', (socket) => {
         io.emit('update_all', gameState);
     });
 
-    // --- ピースを置いた時 ---
     socket.on('place_piece', (data) => {
         if (data.player !== gameState.turn) return;
 
-        // 盤面を更新
         for (let r = 0; r < data.piece.length; r++) {
             for (let c = 0; c < data.piece[r].length; c++) {
                 if (data.piece[r][c] === 1) {
@@ -62,19 +70,16 @@ io.on('connection', (socket) => {
             }
         }
 
-        // 使ったピースをサーバーの記憶からも消す
         gameState.inventories[data.player] = gameState.inventories[data.player].filter(idx => idx !== data.pieceIndex);
 
-        // 次の人の番へ
         gameState.turn = getNextTurn(gameState.turn);
         io.emit('update_all', gameState);
     });
 
-    // --- パスした時 ---
     socket.on('pass_turn', (player) => {
-        // パスした人をリストから除外
-        gameState.activePlayers = gameState.activePlayers.filter(p => p !== player);
-        gameState.turn = getNextTurn(gameState.turn);
+        if (player !== gameState.turn) return; 
+        
+        gameState.turn = getNextTurn(gameState.turn, player);
         io.emit('update_all', gameState);
     });
 });
