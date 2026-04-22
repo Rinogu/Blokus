@@ -50,7 +50,7 @@
         .mini-cell.filled { background-color: #555; }
         .mini-cell.empty { border-color: transparent; }
 
-        /* 他プレイヤー用の超極小ピース */
+        /* 他プレイヤー用の極小ピース */
         .micro-cell { width: 6px; height: 6px; border: 1px solid #ccc; }
         .micro-cell.empty { border-color: transparent; }
 
@@ -235,7 +235,7 @@
             } else {
                 const colors = ["", "青 (P1)", "黄 (P2)", "赤 (P3)", "緑 (P4)"];
                 const isMyTurn = (gameState.turn === myColor);
-                turnDisp.textContent = isMyTurn ? "★あなたの番です★" : `現在：${colors[gameState.turn]} の番です`;
+                turnDisp.textContent = isMyTurn ? "あなたの番ですff" : `現在：${colors[gameState.turn]} の番です`;
                 turnDisp.className = `turn-indicator player${gameState.turn}`;
             }
 
@@ -268,8 +268,14 @@
                     }
 
                     cell.onmouseenter = () => { hoverX = x; hoverY = y; drawBoard(); };
+                    
+                    // ★ここを修正！ なぜ置けないのかアラートを出して教えるようにしました
                     cell.onclick = () => {
-                        if (currentPieceData && valid) {
+                        if (!currentPieceData) return;
+
+                        // クリックした座標でルール判定を行う
+                        if (isValidPlacement(currentPieceData, x, y, myColor)) {
+                            // ルールOKならサーバーに送信
                             socket.emit('place_piece', { 
                                 player: myColor, 
                                 piece: currentPieceData, 
@@ -278,6 +284,13 @@
                             });
                             selectedPieceOriginalIndex = null;
                             currentPieceData = null;
+                        } else {
+                            // ルールNGの場合、理由を教えてあげる
+                            if (gameState.turn !== myColor) {
+                                alert("今はあなたの番ではありません！");
+                            } else {
+                                alert("ルール上、そこには置けません！\n（※最初の1手目は、必ず盤面の『四隅（カド）』のいずれかに置いてください）");
+                            }
                         }
                     };
                     boardElement.appendChild(cell);
@@ -320,7 +333,7 @@
                 invDiv.className = 'opponent-inventory';
                 
                 gameState.inventories[i].forEach(idx => {
-                    // 超極小サイズで描画
+                    // 極小サイズで描画
                     const pDiv = document.createElement('div');
                     pDiv.innerHTML = createPieceHTML(PIECES[idx], 'micro-cell', `player${i}`);
                     invDiv.appendChild(pDiv);
@@ -347,12 +360,26 @@
             return p.map(row => [...row].reverse());
         }
 
-        // キーボード操作（Rで回転、Fで反転）
-        window.onkeydown = (e) => {
+       // キーボード操作
+        document.addEventListener('keydown', (e) => {
             if (!currentPieceData) return;
-            if (e.key.toLowerCase() === 'r') { currentPieceData = getRotated(currentPieceData); drawBoard(); }
-            if (e.key.toLowerCase() === 'f') { currentPieceData = getFlipped(currentPieceData); drawBoard(); }
-        };
+            
+            // 押されたキーの情報を取得（小文字にする）
+            const key = e.key.toLowerCase();
+            const code = e.code;
+            
+            // Rキー（半角のr、全角のｒ、物理キーのKeyRのどれか）
+            if (code === 'KeyR' || key === 'r' || key === 'ｒ') { 
+                currentPieceData = getRotated(currentPieceData); 
+                drawBoard(); 
+            }
+            
+            // Fキー（半角のf、全角のｆ、物理キーのKeyFのどれか）
+            if (code === 'KeyF' || key === 'f' || key === 'ｆ') { 
+                currentPieceData = getFlipped(currentPieceData); 
+                drawBoard(); 
+            }
+        });
 
         // マウスが盤面から出た時のリセット
         document.getElementById('board').onmouseleave = () => { hoverX = -1; hoverY = -1; drawBoard(); };
